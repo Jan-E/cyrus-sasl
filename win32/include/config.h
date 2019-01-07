@@ -103,7 +103,7 @@ typedef int		    intptr_t;
 #define STATIC_OTP 1
 #define STATIC_PLAIN 1
 #define STATIC_SASLDB 1
-#define STATIC_SRP 1
+#define STATIC_SRP 0
 
 /* ------------------------------------------------------------ */
 

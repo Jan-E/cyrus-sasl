@@ -94,7 +94,7 @@ static void sockaddr_unmapped(
     if (!IN6_IS_ADDR_V4MAPPED((&sin6->sin6_addr)))
 	return;
     sin4 = (struct sockaddr_in *)sa;
-    addr = *(uint32_t *)&sin6->sin6_addr.s6_addr[12];
+    addr = *(uint32_t *)&sin6->sin6_addr.s6_addr32[3];
     port = sin6->sin6_port;
     memset(sin4, 0, sizeof(struct sockaddr_in));
     sin4->sin_addr.s_addr = addr;
@@ -838,10 +838,7 @@ void _plug_snprintf_os_info (char * osbuf, int osbuf_len)
 
     versioninfo.dwOSVersionInfoSize = sizeof (versioninfo);
     sysname = "Unknown Windows";
-#if 1
-	snprintf(osbuf, osbuf_len, "%s", sysname);
-	goto SKIP_OS_INFO;
-#else
+
     if (GetVersionEx ((OSVERSIONINFO *) &versioninfo) == FALSE) {
 	snprintf(osbuf, osbuf_len, "%s", sysname);
 	goto SKIP_OS_INFO;
@@ -905,7 +902,7 @@ void _plug_snprintf_os_info (char * osbuf, int osbuf_len)
 	     versioninfo.szCSDVersion,
 	     versioninfo.dwBuildNumber
 	     );
-#endif
+
 SKIP_OS_INFO:
     ;
 

@@ -14,3 +14,4 @@ cyrus-sasl/test/Release
 cyrus-sasl/test/x64/Release
 cyrus-sasl/test/Debug
 cyrus-sasl/test/x64/Debug
+cyrus-sasl/.vs
