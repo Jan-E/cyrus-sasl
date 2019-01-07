@@ -53,6 +53,9 @@
 #endif
 #include <openssl/evp.h>
 #include <openssl/des.h>
+
+/* for legacy libcrypto support */
+#include "crypto-compat.h"
 #endif
 
 #define LDAP_DEPRECATED 1
@@ -92,7 +95,9 @@ static int lak_auth_custom(LAK *, const char *, const char *, const char *, cons
 static int lak_auth_bind(LAK *, const char *, const char *, const char *, const char *);
 static int lak_auth_fastbind(LAK *, const char *, const char *, const char *, const char *);
 static int lak_group_member(LAK *, const char *, const char *, const char *, const char *);
+#if 0 /* unused */
 static char *lak_result_get(const LAK_RESULT *, const char *);
+#endif
 static int lak_result_add(const char *, const char *, LAK_RESULT **);
 static int lak_check_password(const char *, const char *, void *);
 static int lak_check_crypt(const char *, const char *, void *);
@@ -612,7 +617,7 @@ static int lak_expand_tokens(
 			case 'U':
 				if (ISSET(username)) {
 					user = strchr(username, '@');
-					rc=lak_escape(username, (user ? user - username : strlen(username)), &ebuf);
+					rc=lak_escape(username, (user ? user - username : (unsigned) strlen(username)), &ebuf);
 					if (rc == LAK_OK) {
 						strcat(buf,ebuf);
 						free(ebuf);
@@ -653,8 +658,9 @@ static int lak_expand_tokens(
 						strcat(buf,ebuf);
 						free(ebuf);
 					}
-					break;
-				} 
+				} else
+					syslog(LOG_DEBUG|LOG_AUTH, "Domain/Realm not available.");
+                                break;
 			case 'R':
 			case 'r':
 				if (ISSET(realm)) {
@@ -835,7 +841,12 @@ static int lak_connect(
 
 	rc = ldap_set_option(lak->ld, LDAP_OPT_NETWORK_TIMEOUT, &(lak->conf->timeout));
 	if (rc != LDAP_OPT_SUCCESS) {
-		syslog(LOG_WARNING|LOG_AUTH, "Unable to set LDAP_OPT_NETWORK_TIMEOUT %d.%d.", lak->conf->timeout.tv_sec, lak->conf->timeout.tv_usec);
+		syslog(LOG_WARNING|LOG_AUTH, "Unable to set LDAP_OPT_NETWORK_TIMEOUT %ld.%ld.", lak->conf->timeout.tv_sec, lak->conf->timeout.tv_usec);
+	}
+
+	rc = ldap_set_option(lak->ld, LDAP_OPT_TIMEOUT, &(lak->conf->timeout));
+	if (rc != LDAP_OPT_SUCCESS) {
+		syslog(LOG_WARNING|LOG_AUTH, "Unable to set LDAP_OPT_TIMEOUT %ld.%ld.", lak->conf->timeout.tv_sec, lak->conf->timeout.tv_usec);
 	}
 
 	rc = ldap_set_option(lak->ld, LDAP_OPT_TIMELIMIT, &(lak->conf->time_limit));
@@ -1373,8 +1384,8 @@ static int lak_group_member(
     }
 
 done:;
-	if (res)
-		ldap_msgfree(res);
+    if (res)
+        ldap_msgfree(res);
     if (group_dn)
         free(group_dn);
     if (group_filter)
@@ -1386,7 +1397,7 @@ done:;
     if (dn_bv)
         ber_bvfree(dn_bv);
 
-	return rc;
+    return rc;
 }
 
 static int lak_auth_custom(
@@ -1448,9 +1459,27 @@ static int lak_auth_bind(
 	if ( rc == LAK_OK &&
 	    (ISSET(lak->conf->group_dn) ||
          ISSET(lak->conf->group_filter)) )
-		rc = lak_group_member(lak, user, service, realm, dn->value);
+	  {
+		/* restore config bind */
+                lak_unbind(lak);
+		lak_user_free(lu);
+		rc = lak_user(
+		lak->conf->bind_dn,
+		lak->conf->id,
+		lak->conf->authz_id,
+		lak->conf->mech,
+		lak->conf->realm,
+		lak->conf->password,
+		&lu);
+		if (rc != LAK_OK)
+			goto done;
+		rc = lak_bind(lak, lu);
+		if (rc != LAK_OK)
+			goto done;
 
-done:;
+		rc = lak_group_member(lak, user, service, realm, dn->value);
+	    }
+done:
 	if (lu)
 		lak_user_free(lu);
 	if (dn)
@@ -1549,6 +1578,9 @@ int lak_authenticate(
                                 syslog(LOG_INFO|LOG_AUTH, "Retrying authentication");
                                 break;
                             }
+
+                            GCC_FALLTHROUGH
+
                         default:
                             syslog(
                                 LOG_DEBUG|LOG_AUTH, 
@@ -1600,6 +1632,7 @@ char *lak_error(
     }
 }
 
+#if 0 /* unused */
 static char *lak_result_get(
     const LAK_RESULT *lres, 
     const char *attr) 
@@ -1613,6 +1646,7 @@ static char *lak_result_get(
 
     return NULL;
 }
+#endif
 
 static int lak_result_add(
 	const char *attr,
@@ -1715,20 +1749,28 @@ static int lak_base64_decode(
 
 	int rc, i, tlen = 0;
 	char *text;
-	EVP_ENCODE_CTX EVP_ctx;
+	EVP_ENCODE_CTX *enc_ctx = EVP_ENCODE_CTX_new();
 
-	text = (char *)malloc(((strlen(src)+3)/4 * 3) + 1);
-	if (text == NULL)
+	if (enc_ctx == NULL)
 		return LAK_NOMEM;
 
-	EVP_DecodeInit(&EVP_ctx);
-	rc = EVP_DecodeUpdate(&EVP_ctx, text, &i, (char *)src, strlen(src));
+	text = (char *)malloc(((strlen(src)+3)/4 * 3) + 1);
+	if (text == NULL) {
+		EVP_ENCODE_CTX_free(enc_ctx);
+		return LAK_NOMEM;
+	}
+
+	EVP_DecodeInit(enc_ctx);
+	rc = EVP_DecodeUpdate(enc_ctx, (unsigned char *) text, &i, (const unsigned char *)src, strlen(src));
 	if (rc < 0) {
+		EVP_ENCODE_CTX_free(enc_ctx);
 		free(text);
 		return LAK_FAIL;
 	}
 	tlen += i;
-	EVP_DecodeFinal(&EVP_ctx, text, &i); 
+	EVP_DecodeFinal(enc_ctx, (unsigned char *) text, &i);
+
+	EVP_ENCODE_CTX_free(enc_ctx);
 
 	*ret = text;
 	if (rlen != NULL)
@@ -1744,7 +1786,7 @@ static int lak_check_hashed(
 {
 	int rc, clen;
 	LAK_HASH_ROCK *hrock = (LAK_HASH_ROCK *) rock;
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx;
 	const EVP_MD *md;
 	unsigned char digest[EVP_MAX_MD_SIZE];
 	char *cred;
@@ -1753,17 +1795,24 @@ static int lak_check_hashed(
 	if (!md)
 		return LAK_FAIL;
 
-	rc = lak_base64_decode(hash, &cred, &clen);
-	if (rc != LAK_OK)
-		return rc;
+	mdctx = EVP_MD_CTX_new();
+	if (!mdctx)
+		return LAK_NOMEM;
 
-	EVP_DigestInit(&mdctx, md);
-	EVP_DigestUpdate(&mdctx, passwd, strlen(passwd));
+	rc = lak_base64_decode(hash, &cred, &clen);
+	if (rc != LAK_OK) {
+		EVP_MD_CTX_free(mdctx);
+		return rc;
+	}
+
+	EVP_DigestInit(mdctx, md);
+	EVP_DigestUpdate(mdctx, passwd, strlen(passwd));
 	if (hrock->salted) {
-		EVP_DigestUpdate(&mdctx, &cred[EVP_MD_size(md)],
+		EVP_DigestUpdate(mdctx, &cred[EVP_MD_size(md)],
 				 clen - EVP_MD_size(md));
 	}
-	EVP_DigestFinal(&mdctx, digest, NULL);
+	EVP_DigestFinal(mdctx, digest, NULL);
+	EVP_MD_CTX_free(mdctx);
 
 	rc = memcmp((char *)cred, (char *)digest, EVP_MD_size(md));
 	free(cred);

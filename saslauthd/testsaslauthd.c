@@ -2,7 +2,7 @@
  * Rob Siemborski
  */
 /* 
- * Copyright (c) 1998-2003 Carnegie Mellon University.  All rights reserved.
+ * Copyright (c) 1998-2016 Carnegie Mellon University.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,12 +20,13 @@
  *    endorse or promote products derived from this software without
  *    prior written permission. For permission or any other legal
  *    details, please contact  
- *      Office of Technology Transfer
  *      Carnegie Mellon University
- *      5000 Forbes Avenue
- *      Pittsburgh, PA  15213-3890
- *      (412) 268-4387, fax: (412) 268-7395
- *      tech-transfer@andrew.cmu.edu
+ *      Center for Technology Transfer and Enterprise Creation
+ *      4615 Forbes Avenue
+ *      Suite 302
+ *      Pittsburgh, PA  15213
+ *      (412) 268-7393, fax: (412) 268-7395
+ *      innovation@andrew.cmu.edu
  *
  * 4. Redistributions of any form whatsoever must retain the following
  *    acknowledgment:
@@ -41,7 +42,7 @@
  * OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <saslauthd.h>
+#include <config.h>
 #include <stdio.h>
 
 #include <errno.h>
@@ -105,9 +106,7 @@ static int saslauthd_verify_password(const char *saslauthd_path,
     struct sockaddr_un srvaddr;
     int r;
     unsigned short count;
-    void *context;
     char pwpath[sizeof(srvaddr.sun_path)];
-    const char *p = NULL;
 #ifdef USE_DOORS
     door_arg_t arg;
 #endif
@@ -117,7 +116,7 @@ static int saslauthd_verify_password(const char *saslauthd_path,
     if(!userid || !passwd) return -1;
     
     if (saslauthd_path) {
-	strncpy(pwpath, saslauthd_path, sizeof(pwpath));
+	strlcpy(pwpath, saslauthd_path, sizeof(pwpath));
     } else {
 	if (strlen(PATH_SASLAUTHD_RUNDIR) + 4 + 1 > sizeof(pwpath))
 	    return -1;
@@ -133,7 +132,6 @@ static int saslauthd_verify_password(const char *saslauthd_path,
      */
     {
  	unsigned short u_len, p_len, s_len, r_len;
- 	struct iovec iov[8];
  
  	u_len = htons(strlen(userid));
  	p_len = htons(strlen(passwd));
@@ -189,10 +187,11 @@ static int saslauthd_verify_password(const char *saslauthd_path,
 
     memset((char *)&srvaddr, 0, sizeof(srvaddr));
     srvaddr.sun_family = AF_UNIX;
-    strncpy(srvaddr.sun_path, pwpath, sizeof(srvaddr.sun_path));
+    strlcpy(srvaddr.sun_path, pwpath, sizeof(srvaddr.sun_path));
 
     r = connect(s, (struct sockaddr *) &srvaddr, sizeof(srvaddr));
     if (r == -1) {
+        close(s);
         perror("connect() ");
 	return -1;
     }
@@ -204,9 +203,10 @@ static int saslauthd_verify_password(const char *saslauthd_path,
 	iov[0].iov_base = query;
 
 	if (retry_writev(s, iov, 1) == -1) {
-            fprintf(stderr,"write failed\n");
-  	    return -1;
-  	}
+	    close(s);
+	    fprintf(stderr,"write failed\n");
+	    return -1;
+	}
     }
   
     /*
@@ -215,8 +215,9 @@ static int saslauthd_verify_password(const char *saslauthd_path,
      * count result
      */
     if (retry_read(s, &count, sizeof(count)) < (int) sizeof(count)) {
+        close(s);
         fprintf(stderr,"size read failed\n");
-	return -1;
+        return -1;
     }
   
     count = ntohs(count);
@@ -253,10 +254,7 @@ main(int argc, char *argv[])
   const char *realm = NULL, *service = NULL, *path = NULL;
   int c;
   int flag_error = 0;
-  unsigned passlen, verifylen;
-  const char *errstr = NULL;
-  int result;
-  char *user_domain = NULL;
+  int result = 0;
   int repeat = 0;
 
   while ((c = getopt(argc, argv, "p:u:r:s:f:R:")) != EOF)

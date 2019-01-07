@@ -1,10 +1,8 @@
 /* pluginviewer.c -- Plugin Viewer for CMU SASL
  * Alexey Melnikov, Isode Ltd.
- *
- * $Id: pluginviewer.c,v 1.11 2011/09/01 14:12:18 mel Exp $
  */
 /* 
- * Copyright (c) 2004 Carnegie Mellon University.  All rights reserved.
+ * Copyright (c) 2004-2016 Carnegie Mellon University.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -22,12 +20,13 @@
  *    endorse or promote products derived from this software without
  *    prior written permission. For permission or any other legal
  *    details, please contact  
- *      Office of Technology Transfer
  *      Carnegie Mellon University
- *      5000 Forbes Avenue
- *      Pittsburgh, PA  15213-3890
- *      (412) 268-4387, fax: (412) 268-7395
- *      tech-transfer@andrew.cmu.edu
+ *      Center for Technology Transfer and Enterprise Creation
+ *      4615 Forbes Avenue
+ *      Suite 302
+ *      Pittsburgh, PA  15213
+ *      (412) 268-7393, fax: (412) 268-7395
+ *      innovation@andrew.cmu.edu
  *
  * 4. Redistributions of any form whatsoever must retain the following
  *    acknowledgment:
@@ -87,9 +86,6 @@ int main(void)
 #ifndef HAVE_GETSUBOPT
 int getsubopt(char **optionp, const char * const *tokens, char **valuep);
 #endif
-
-static const char
-build_ident[] = "$Build: pluginviewer " PACKAGE "-" VERSION " $";
 
 static const char *progname = NULL;
 /* SASL authentication methods (client or server side). NULL means all. */
@@ -209,8 +205,8 @@ getpath(void *context,
 
 static int
 plugview_sasl_getopt (
-    void *context,
-    const char *plugin_name,
+    void *context __attribute__((unused)),
+    const char *plugin_name __attribute__((unused)),
     const char *option,
     const char **result,
     unsigned *len
@@ -291,6 +287,9 @@ list_installed_server_mechanisms (
 	} else {
 	    /* This is suboptimal, but works */
 	    new_list = malloc (strlen(*list_of_mechs) + strlen(m->plug->mech_name) + 2);
+	    if (new_list == NULL) {
+		return;
+	    }
 	    sprintf (new_list, "%s %s", *list_of_mechs, m->plug->mech_name);
 	    free (*list_of_mechs);
 	    *list_of_mechs = new_list;
@@ -319,6 +318,9 @@ list_installed_client_mechanisms (
 	} else {
 	    /* This is suboptimal, but works */
 	    new_list = malloc (strlen(*list_of_mechs) + strlen(m->plug->mech_name) + 2);
+	    if (new_list == NULL) {
+		return;
+	    }
 	    sprintf (new_list, "%s %s", *list_of_mechs, m->plug->mech_name);
 	    free (*list_of_mechs);
 	    *list_of_mechs = new_list;
@@ -346,6 +348,9 @@ list_installed_auxprop_mechanisms (
     } else {
 	/* This is suboptimal, but works */
 	new_list = malloc (strlen(*list_of_mechs) + strlen(m->name) + 2);
+	if (new_list == NULL) {
+	    return;
+	}
 	sprintf (new_list, "%s %s", *list_of_mechs, m->name);
 	free (*list_of_mechs);
 	*list_of_mechs = new_list;
@@ -422,7 +427,7 @@ main(int argc, char *argv[])
         case 'b':
             options = optarg;
             while (*options != '\0') {
-	        switch(getsubopt(&options, (const char * const *)bit_subopts, &value)) {
+	        switch(getsubopt(&options, (char * const *)bit_subopts, &value)) {
 	        case OPT_MIN:
                     if (! value) {
 	                errflag = 1;
@@ -447,7 +452,7 @@ main(int argc, char *argv[])
         case 'e':
             options = optarg;
             while (*options != '\0') {
-	        switch(getsubopt(&options, (const char * const *)ext_subopts, &value)) {
+	        switch(getsubopt(&options, (char * const *)ext_subopts, &value)) {
 	        case OPT_EXT_SSF:
                     if (! value) {
 	                errflag = 1;
@@ -476,7 +481,7 @@ main(int argc, char *argv[])
         case 'f':
             options = optarg;
             while (*options != '\0') {
-	        switch(getsubopt(&options, (const char * const *)flag_subopts, &value)) {
+	        switch(getsubopt(&options, (char * const *)flag_subopts, &value)) {
 	        case OPT_NOPLAIN:
 	            secprops.security_flags |= SASL_SEC_NOPLAINTEXT;
 	            break;

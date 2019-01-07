@@ -53,9 +53,7 @@
  * Proxy authentication to a remote HTTP server.
  * END SYNOPSIS */
 
-#ifdef __GNUC__
-#ident "$Id: auth_httpform.c,v 1.2 2006/04/19 19:51:04 murch Exp $"
-#endif
+#include <config.h>
 
 /* PUBLIC DEPENDENCIES */
 #include <unistd.h>
@@ -73,6 +71,7 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <netdb.h>
+#include <stdio.h>
 
 #include "mechanisms.h"
 #include "utils.h"
@@ -83,6 +82,10 @@
 
 #ifndef MAX
 #define MAX(p,q) ((p >= q) ? p : q)
+#endif
+
+#ifndef MIN
+#define MIN(p,q) ((p <= q) ? p : q)
 #endif
 
 /* PRIVATE DEPENDENCIES */
@@ -102,6 +105,7 @@ static struct addrinfo *ai = NULL;      /* remote host, as looked up    */
 #define SPACE " "
 
 #define HTTP_STATUS_SUCCESS "200"
+#define HTTP_STATUS_NOCONTENT "204"
 #define HTTP_STATUS_REFUSE "403"
 
 /* Common failure response strings for auth_httpform() */
@@ -168,7 +172,7 @@ static char *url_escape(
     size_t length = strlen(string);
     size_t alloc = length+50;   /* add some reserve */
     char *out;
-    int outidx=0, inidx=0;
+    size_t outidx=0, inidx=0;
     /* END VARIABLES */
 
     out = malloc(alloc);
@@ -234,7 +238,8 @@ static char *create_post_data(
 {
     /* VARIABLES */
     const char *ptr, *line_ptr;
-    char *buf, *buf_ptr;
+    char *esc_user = NULL, *esc_password = NULL, *esc_realm = NULL;
+    char *buf = NULL, *buf_ptr;
     int filtersize;
     int ulen, plen, rlen;
     int numpercents=0;
@@ -242,28 +247,12 @@ static char *create_post_data(
     size_t i;
     /* END VARIABLES */
 
-    user = url_escape(user);
-    if (!user) {
+    user = esc_user = url_escape(user);
+    password = esc_password = url_escape(password);
+    realm = esc_realm = url_escape(realm);
+    if (!user || !password || !realm) {
         logger(LOG_ERR, "auth_httpform:create_post_data", "failed to allocate memory");
-        return NULL;
-    }
-
-    password = url_escape(password);
-    if (!password) {
-        memset(user, 0, strlen(user));
-        free(user);
-        logger(LOG_ERR, "auth_httpform:create_post_data", "failed to allocate memory");
-        return NULL;
-    }
-
-    realm = url_escape(realm);
-    if (!realm) {
-        memset(user, 0, strlen(user));
-        free(user);
-        memset(password, 0, strlen(password));
-        free(password);
-        logger(LOG_ERR, "auth_httpform:create_post_data", "failed to allocate memory");
-        return NULL;
+        goto CLEANUP;
     }
     
     /* calculate memory needed for creating the complete query string. */
@@ -332,12 +321,18 @@ static char *create_post_data(
     memcpy(buf_ptr, line_ptr, strlen(line_ptr)+1);
 
 CLEANUP:
-    memset(user, 0, strlen(user));
-    memset(password, 0, strlen(password));
-    memset(realm, 0, strlen(realm));
-    free(user);
-    free(password);
-    free(realm);
+    if (esc_user) {
+        memset(esc_user, 0, strlen(esc_user));
+        free(esc_user);
+    }
+    if (esc_password) {
+        memset(esc_password, 0, strlen(esc_password));
+        free(esc_password);
+    }
+    if (esc_realm) {
+        memset(esc_realm, 0, strlen(realm));
+        free(esc_realm);
+    }
 
     return buf;
 }
@@ -367,6 +362,7 @@ static char *build_sasl_response(
     
     /* parse the response, just the first line */
     /* e.g. HTTP/1.1 200 OK */
+    /* e.g. HTTP/1.1 204 No Content */
     /* e.g. HTTP/1.1 403 User unknown */
     c = strpbrk(http_response, CRLF);
     if (c != NULL) {
@@ -378,7 +374,8 @@ static char *build_sasl_response(
     http_response_string = strpbrk(http_response_code, SPACE) + 1;
     *(http_response_string-1) = '\0';  /* replace space after code with 0 */
 
-    if (!strcmp(http_response_code, HTTP_STATUS_SUCCESS)) {
+    if (!strcmp(http_response_code, HTTP_STATUS_SUCCESS) ||
+        !strcmp(http_response_code, HTTP_STATUS_NOCONTENT)) {
         return strdup("OK remote authentication successful");
     }
     if (!strcmp(http_response_code, HTTP_STATUS_REFUSE)) {
@@ -480,7 +477,7 @@ auth_httpform_init (
  * Proxy authenticate to a remote HTTP server with a form POST.
  *
  * This mechanism takes the plaintext authenticator and password, forms
- * them into an HTTP POST request. If the HTTP server responds with a 200
+ * them into an HTTP POST request. If the HTTP server responds with a 200/204
  * status code, the credentials are considered valid. If it responds with
  * a 403 HTTP status code, the credentials are considered wrong. Any other
  * HTTP status code is treated like a network error.
@@ -493,8 +490,8 @@ auth_httpform (
   /* PARAMETERS */
   const char *user,			/* I: plaintext authenticator */
   const char *password,			/* I: plaintext password */
-  const char *service,
-  const char *realm
+  const char *service __attribute__((unused)),
+  const char *realm                    /* I: user's realm */
   /* END PARAMETERS */
   )
 {
@@ -502,7 +499,6 @@ auth_httpform (
     int s=-1;                           /* socket to remote auth host   */
     struct addrinfo *r;                 /* remote socket address info   */
     char *req;                          /* request, with user and pw    */
-    char *c;                            /* scratch pointer              */
     int rc;                             /* return code scratch area     */
     char postbuf[RESP_LEN];             /* request buffer               */
     int postlen;                        /* length of post request       */
@@ -541,6 +537,11 @@ auth_httpform (
                ai->ai_canonname ? ai->ai_canonname : r_host, hbuf, pbuf);
     }
     if (s < 0) {
+        if (!ai) {
+            syslog(LOG_WARNING, "auth_httpform: no address given");
+            return strdup("NO [ALERT] No address given");
+        }
+
         if (getnameinfo(ai->ai_addr, ai->ai_addrlen, NULL, 0,
                         pbuf, sizeof(pbuf), NI_NUMERICSERV) != 0)
             strlcpy(pbuf, "unknown", sizeof(pbuf));
@@ -569,12 +570,13 @@ auth_httpform (
     postlen = snprintf(postbuf, RESP_LEN-1,
               "POST %s HTTP/1.1" CRLF
               "Host: %s:%s" CRLF
+              "Connection: close" CRLF
               "User-Agent: saslauthd" CRLF
               "Accept: */*" CRLF
               "Content-Type: application/x-www-form-urlencoded" CRLF
               "Content-Length: %d" TWO_CRLF
               "%s",
-              r_uri, r_host, r_port, strlen(req), req);
+              r_uri, r_host, r_port, (int)strlen(req), req);
 
     if (flags & VERBOSE) {
         syslog(LOG_DEBUG, "auth_httpform: sending %s %s %s",
@@ -602,7 +604,7 @@ auth_httpform (
 
     /* read and parse the response */
     alarm(NETWORK_IO_TIMEOUT);
-    rc = read(s, rbuf, sizeof(rbuf));
+    rc = read(s, rbuf, RESP_LEN-1);
     alarm(0);
     
     close(s);                    /* we're done with the remote */
@@ -612,11 +614,13 @@ auth_httpform (
         return strdup(RESP_IERROR);
     }
 
+    rc = MIN(rc, RESP_LEN - 1);  /* don't write past rbuf */
+    rbuf[rc] = '\0';             /* make sure str-funcs find null */
+
     if (flags & VERBOSE) {
         syslog(LOG_DEBUG, "auth_httpform: [%s] %s", user, rbuf);
     }
 
-    rbuf[rc] = '\0';             /* make sure str-funcs find null */
     return build_sasl_response(rbuf);
 }
 

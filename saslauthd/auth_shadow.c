@@ -27,15 +27,17 @@
  * DAMAGE.
  * END COPYRIGHT */
 
-#ifdef __GNUC__
-#ident "$Id: auth_shadow.c,v 1.12 2009/08/14 14:58:38 mel Exp $"
-#endif
+#include <config.h>
 
 /* PUBLIC DEPENDENCIES */
 #include "mechanisms.h"
+#include <stdio.h>
 
 #ifdef AUTH_SHADOW
 
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE
+#endif
 #define PWBUFSZ 256 /***SWB***/
 
 # include <unistd.h>
@@ -69,6 +71,10 @@
 # else /* ! HAVE_GETUSERPW */
 #  include <shadow.h>
 # endif /* ! HAVE_GETUSERPW */
+
+# ifdef HAVE_CRYPT_H
+#  include <crypt.h>
+# endif
 
 # include "auth_shadow.h"
 # include "globals.h"
@@ -118,6 +124,8 @@ auth_shadow (
 
     struct spwd spbuf;
     char spdata[PWBUFSZ];		/* spbuf indirect data goes in here */
+
+    struct crypt_data cdata;
 #  endif /* _REENTRANT */
     /* END VARIABLES */
 
@@ -210,7 +218,12 @@ auth_shadow (
 	RETURN("NO Insufficient permission to access NIS authentication database (saslauthd)");
     }
 
+#  ifdef _REENTRANT
+    cdata.initialized = 0;
+    cpw = crypt_r(password, sp->sp_pwdp, &cdata);
+#  else
     cpw = crypt(password, sp->sp_pwdp);
+#  endif /* _REENTRANT */
     if (!cpw || strcmp(sp->sp_pwdp, (const char *)cpw)) {
 	if (flags & VERBOSE) {
 	    /*
@@ -233,7 +246,7 @@ auth_shadow (
 
     if ((sp->sp_expire != -1) && (today > sp->sp_expire)) {
 	if (flags & VERBOSE) {
-	    syslog(LOG_DEBUG, "DEBUG: auth_shadow: account expired: %dl > %dl",
+	    syslog(LOG_DEBUG, "DEBUG: auth_shadow: account expired: %ld > %ld",
 		   today, sp->sp_expire);
 	}
 	RETURN("NO Account expired");

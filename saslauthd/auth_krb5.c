@@ -27,10 +27,6 @@
  * DAMAGE.
  * END COPYRIGHT */
 
-#ifdef __GNUC__
-#ident "$Id: auth_krb5.c,v 1.18 2008/01/23 15:39:34 murch Exp $"
-#endif
-
 /* ok, this is  wrong but the most convenient way of doing 
  * it for now. We assume (possibly incorrectly) that if GSSAPI exists then 
  * the Kerberos 5 headers and libraries exist.   
@@ -79,7 +75,6 @@ auth_krb5_init (
   )
 {
 #ifdef AUTH_KRB5
-    int rc;
     char *configname = 0;
 
     if (krbtf_init() == -1) {
@@ -102,8 +97,8 @@ auth_krb5_init (
     }
 
     if (config) {
-	keytabname = cfile_getstring(config, "krb5_keytab", keytabname);
-	verify_principal = cfile_getstring(config, "krb5_verify_principal", verify_principal);
+	keytabname = (char *) cfile_getstring(config, "krb5_keytab", keytabname);
+	verify_principal = (char *) cfile_getstring(config, "krb5_verify_principal", verify_principal);
     }
 
     return 0;
@@ -127,6 +122,15 @@ form_principal_name (
     const char *forced_instance = 0;
 	int plen;
 
+    plen = strlcpy(pname, user, pnamelen);
+    user = pname;
+
+    if (config && cfile_getswitch(config, "krb5_conv_krb4_instance", 0)) {
+       char *krb4_instance;
+
+       if ((krb4_instance = strchr(pname, '.'))) *krb4_instance = '/';
+    }
+
     if (config) {
 	char keyname[1024];
 
@@ -137,7 +141,7 @@ form_principal_name (
     if (forced_instance) {
 	char *user_specified;
 
-	if (user_specified = strchr(user, '/')) {
+	if ((user_specified = strchr(user, '/'))) {
 	    if (strcmp(user_specified + 1, forced_instance)) {
 		/* user not allowed to override sysadmin */
 		return -1;
@@ -149,8 +153,7 @@ form_principal_name (
     }
 
     /* form user[/instance][@realm] */
-    plen = snprintf(pname, pnamelen, "%s%s%s%s%s",
-	user,
+    plen += snprintf(pname+plen, pnamelen-plen, "%s%s%s%s",
 	(forced_instance ? "/" : ""),
 	(forced_instance ? forced_instance : ""),
 	((realm && realm[0]) ? "@" : ""),
@@ -254,13 +257,14 @@ auth_krb5 (
 
 #else /* !KRB5_HEIMDAL */
 
-static void k5support_log_err(krb5_context context,
+static void k5support_log_err(int priority,
+                              krb5_context context,
 			      krb5_error_code code,
 			      char const *msg)
 {
     const char *k5_msg = krb5_get_error_message(context, code);
 
-    syslog(LOG_DEBUG, "auth_krb5: %s: %s (%d)\n", msg, k5_msg, code);
+    syslog(priority, "auth_krb5: %s: %s (%d)\n", msg, k5_msg, code);
     krb5_free_error_message(context, k5_msg);
 }
 
@@ -281,20 +285,20 @@ static int k5support_verify_tgt(krb5_context context,
 
     if ((k5_retcode = krb5_sname_to_principal(context, NULL, verify_principal,
 					      KRB5_NT_SRV_HST, &server))) {
-	k5support_log_err(context, k5_retcode, "krb5_sname_to_principal()");
+	k5support_log_err(LOG_DEBUG, context, k5_retcode, "krb5_sname_to_principal()");
 	return 0;
     }
 
     if (keytabname) {
 	if ((k5_retcode = krb5_kt_resolve(context, keytabname, &kt))) {
-	    k5support_log_err(context, k5_retcode, "krb5_kt_resolve()");
+	    k5support_log_err(LOG_DEBUG, context, k5_retcode, "krb5_kt_resolve()");
 	    goto fini;
 	}
     }
     
     if ((k5_retcode = krb5_kt_read_service_key(context, kt, server, 0,
 					       0, &keyblock))) {
-	k5support_log_err(context, k5_retcode, "krb5_kt_read_service_key()");
+	k5support_log_err(LOG_DEBUG, context, k5_retcode, "krb5_kt_read_service_key()");
 	goto fini;
     }
     
@@ -312,7 +316,7 @@ static int k5support_verify_tgt(krb5_context context,
     
     if ((k5_retcode = krb5_mk_req(context, &auth_context, 0, verify_principal, 
 				  thishost, NULL, ccache, &packet))) {
-	k5support_log_err(context, k5_retcode, "krb5_mk_req()");
+	k5support_log_err(LOG_DEBUG, context, k5_retcode, "krb5_mk_req()");
     }
     
     if (auth_context) {
@@ -326,7 +330,7 @@ static int k5support_verify_tgt(krb5_context context,
     
     if ((k5_retcode = krb5_rd_req(context, &auth_context, &packet, 
 				  server, NULL, NULL, NULL))) {
-	k5support_log_err(context, k5_retcode, "krb5_rd_req()");
+	k5support_log_err(LOG_DEBUG, context, k5_retcode, "krb5_rd_req()");
 	goto fini;
     }
 
@@ -389,9 +393,9 @@ auth_krb5 (
 	return strdup("NO saslauthd principal name error");
     }
 
-    if (krb5_parse_name (context, principalbuf, &auth_user)) {
+    if ((code = krb5_parse_name (context, principalbuf, &auth_user))) {
+	k5support_log_err(LOG_ERR, context, code, "krb5_parse_name()");
 	krb5_free_context(context);
-	syslog(LOG_ERR, "auth_krb5: krb5_parse_name");
 	return strdup("NO saslauthd internal error");
     }
     
@@ -400,39 +404,39 @@ auth_krb5 (
 	return strdup("NO saslauthd internal error");
     }
 
-    if (krb5_cc_resolve(context, tfname, &ccache)) {
+    if ((code = krb5_cc_resolve(context, tfname, &ccache))) {
+	k5support_log_err(LOG_ERR, context, code, "krb5_cc_resolve()");
 	krb5_free_principal(context, auth_user);
 	krb5_free_context(context);
-	syslog(LOG_ERR, "auth_krb5: krb5_cc_resolve");
 	return strdup("NO saslauthd internal error");
     }
     
-    if (krb5_cc_initialize (context, ccache, auth_user)) {
+    if ((code = krb5_cc_initialize (context, ccache, auth_user))) {
+	k5support_log_err(LOG_ERR, context, code, "krb5_cc_initialize()");
 	krb5_free_principal(context, auth_user);
 	krb5_free_context(context);
-	syslog(LOG_ERR, "auth_krb5: krb5_cc_initialize");
 	return strdup("NO saslauthd internal error");
     }
     
     krb5_get_init_creds_opt_init(&opts);
     /* 15 min should be more than enough */
     krb5_get_init_creds_opt_set_tkt_life(&opts, 900); 
-    if (code = krb5_get_init_creds_password(context, &creds, 
-				     auth_user, password, NULL, NULL, 
-				     0, NULL, &opts)) {
+    if ((code = krb5_get_init_creds_password(context, &creds, 
+                                             auth_user, password, NULL, NULL, 
+                                             0, NULL, &opts))) {
+	k5support_log_err(LOG_ERR, context, code, "krb5_get_init_creds_password()");
 	krb5_cc_destroy(context, ccache);
 	krb5_free_principal(context, auth_user);
 	krb5_free_context(context);
-	syslog(LOG_ERR, "auth_krb5: krb5_get_init_creds_password: %d", code);
 	return strdup("NO saslauthd internal error");
     }
     
     /* at this point we should have a TGT. Let's make sure it is valid */
-    if (krb5_cc_store_cred(context, ccache, &creds)) {
+    if ((code = krb5_cc_store_cred(context, ccache, &creds))) {
+	k5support_log_err(LOG_ERR, context, code, "krb5_cc_store_cred()");
 	krb5_free_principal(context, auth_user);
 	krb5_cc_destroy(context, ccache);
 	krb5_free_context(context);
-	syslog(LOG_ERR, "auth_krb5: krb5_cc_store_cred");
 	return strdup("NO saslauthd internal error");
     }
     

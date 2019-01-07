@@ -381,7 +381,7 @@ int main(int argc, char **argv) {
 char *do_auth(const char *_login, const char *password, const char *service, const char *realm) {
 
 	struct cache_result	lkup_result;
-	char			*response;
+	char			*response = NULL;
 	int			cached = 0;
 	char			login_buff[MAX_LOGIN_REALM_LEN];
 	char			*login;
@@ -438,6 +438,7 @@ char *do_auth(const char *_login, const char *password, const char *service, con
 	}
 
 	logger(L_ERR, L_FUNC, "mechanism returned unknown response: %s", auth_mech->name);
+	free(response);
 	response = strdup("NO internal mechanism failure");
 
 	return response;
@@ -631,7 +632,6 @@ void detach_tty() {
     int		null_fd;
     int         exit_result;
     pid_t      	pid;
-    char       	pid_buf[100];
     struct flock	lockinfo;
     
     /**************************************************************
@@ -893,7 +893,6 @@ void handle_sigchld() {
  * Do some final cleanup here.
  **************************************************************/
 void server_exit() {
-	struct flock    lock_st;
 
 	/*********************************************************
 	 * If we're not the master process, don't do anything

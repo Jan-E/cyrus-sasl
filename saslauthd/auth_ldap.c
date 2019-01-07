@@ -30,10 +30,6 @@
  * Authenticate against LDAP.
  * END SYNOPSIS */
 
-#ifdef __GNUC__
-#ident "$Id: auth_ldap.c,v 1.17 2004/12/08 12:12:27 mel Exp $"
-#endif
-
 /* PUBLIC DEPENDENCIES */
 #include <stdlib.h>
 #include <string.h>
@@ -96,12 +92,6 @@ auth_ldap_init (
   /* END PARAMETERS */
   )
 {
-    /* VARIABLES */
-    struct addrinfo hints;
-    int err;
-    char *c;				/* scratch pointer               */
-    /* END VARIABLES */
-
     if (mech_option != NULL) {
 	SASLAUTHD_CONF_FILE = mech_option;
     }
