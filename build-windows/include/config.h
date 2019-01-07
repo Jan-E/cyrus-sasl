@@ -117,7 +117,6 @@ typedef int		    intptr_t;
 /* Windows calls these functions something else
  */
 #define strcasecmp   _stricmp
-#define snprintf    _snprintf
 #define strncasecmp  _strnicmp
 #define strdup       _strdup
 
